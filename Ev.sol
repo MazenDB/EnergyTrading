@@ -7,7 +7,7 @@ contract Registration {
         uint deposit;
     }
 
-    address private owner;
+    address public owner;
     mapping(address=>actortype) public EV;
     mapping(address=>actortype) public EP;
 
@@ -15,12 +15,8 @@ contract Registration {
     event EnergyProviderRegistered(address EP);
 
     
-    modifier EVorEP {
-        require(EV[msg.sender].exists && EP[msg.sender].exists,
-        "Sender not authorized."
-        );
-        _;
-    }     
+
+    
     
     
     constructor() public{
@@ -55,32 +51,43 @@ contract Registration {
         return(o==owner);
     }
     
-    function depositAmount(uint amount)public EVorEP{
-        if(EV[msg.sender].exists){
-            EV[msg.sender].deposit+=amount;
+    function depositAmount(uint amount,address sender)public {
+    
+        require(EV[sender].exists || EP[sender].exists,
+        "Sender not EV or EP."
+        );
+        
+        if(EV[sender].exists){
+            EV[sender].deposit+=amount;
         }
-        else if(EP[msg.sender].exists){
-            EP[msg.sender].deposit+=amount;
+        else if(EP[sender].exists){
+            EP[sender].deposit+=amount;
         }
     }
 
-    function getDeposit(address actor)public EVorEP view returns(uint){
+    function getDeposit(address actor)public view returns(uint){
+        
         if(EV[actor].exists){
             return EV[actor].deposit;
         }
-        else if(EP[msg.sender].exists){
-            return EP[msg.sender].deposit;
+        else if(EP[actor].exists){
+            return EP[actor].deposit;
         }
     }
 
 
     
-    function deductDeposit(uint amount, address EVAddress)public EVorEP{
-        if(EV[EVAddress].exists){
-            EV[EVAddress].deposit-=amount;
+    function deductDeposit(uint amount, address sender)public {
+        
+        require(EV[sender].exists || EP[sender].exists,
+        "Sender not EV or EP."
+        );
+        
+        if(EV[sender].exists){
+            EV[sender].deposit-=amount;
         }
-        else if(EP[EVAddress].exists){
-            EP[EVAddress].deposit-=amount;
+        else if(EP[sender].exists){
+            EP[sender].deposit-=amount;
         }
     }
 
@@ -93,7 +100,7 @@ contract EnergyTrading{
     
     struct order{
         uint kWh;
-        address EV;
+        address payable EV;
         uint timestamp;
         uint bid;
         bool auctionOpen;
@@ -104,7 +111,7 @@ contract EnergyTrading{
     
     Registration registrationContract;
     Reputation reputationContract;
-    mapping(uint=>order) orderRequest;
+    mapping(uint=>order) public orderRequest;
     address owner;
     uint orderNumber;
     
@@ -148,10 +155,7 @@ contract EnergyTrading{
         require (registrationContract.isOwner(msg.sender),
         "Sender not authorized.");
 
-        require (reputationContract.isOwner(msg.sender),
-        "Sender not authorized.");
-        
-        
+
         orderNumber=uint(keccak256(abi.encodePacked(msg.sender,now,address(this))));
         owner=msg.sender;
     }
@@ -176,7 +180,7 @@ contract EnergyTrading{
                 
         orderNumber++;
         
-        registrationContract.depositAmount(maxPrice);
+        registrationContract.depositAmount(maxPrice,msg.sender);
         
     }
     
@@ -204,7 +208,7 @@ contract EnergyTrading{
         }
         
         
-        registrationContract.depositAmount(bidAmount);
+        registrationContract.depositAmount(bidAmount,msg.sender);
         orderRequest[requestNumber].lastBidder=msg.sender;
         orderRequest[requestNumber].bid=bidAmount;
         
@@ -234,21 +238,21 @@ contract EnergyTrading{
     }
     
     function endCharging(uint requestNumber) onlyEP public{
-        require(orderRequest[requestNumber].lastBidder!=address(0));
+        require(orderRequest[requestNumber].lastBidder==msg.sender);
         
         require(!orderRequest[requestNumber].auctionOpen,
         "Auction still open for bidding"
         );
         
-        address payable tempBidder=orderRequest[requestNumber].lastBidder;
+        address payable tempEV=orderRequest[requestNumber].EV;
         
         msg.sender.transfer(registrationContract.getDeposit(msg.sender));
         registrationContract.deductDeposit(registrationContract.getDeposit(msg.sender), msg.sender);
         
-        tempBidder.transfer(registrationContract.getDeposit(tempBidder));
-        registrationContract.deductDeposit(registrationContract.getDeposit(msg.sender),tempBidder);
+        tempEV.transfer(registrationContract.getDeposit(tempEV));
+        registrationContract.deductDeposit(registrationContract.getDeposit(msg.sender),tempEV);
         
-        emit ChargingProcessEnded(msg.sender, tempBidder);
+        emit ChargingProcessEnded(msg.sender, tempEV);
         
     }
 }
@@ -290,6 +294,9 @@ contract Reputation{
     constructor(address registrationAddress)public {
         registrationContract=Registration(registrationAddress);
         
+        require (registrationContract.isOwner(msg.sender),
+        "Sender not authorized.");
+
         owner=msg.sender;
     }
     
@@ -303,7 +310,7 @@ contract Reputation{
     
     function newEP(address EP) public onlyOwner{
         require(EPRep[EP]==0,
-        "Energy PRovider already added");
+        "Energy Provider already added");
         require(registrationContract.EPExists(EP),
         "Provided EP address is wrong"
         );
@@ -312,7 +319,7 @@ contract Reputation{
     
     function provideFeedback (address EPAddress, bool feedback) public onlyEV {
         require(!feedbackEP[msg.sender].EP[EPAddress],
-        "Retailer has already provided feedback for this supplier"
+        "EV has already provided feedback for this EP"
         );
 
         feedbackEP[msg.sender].EP[EPAddress]=true;
